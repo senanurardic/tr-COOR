@@ -1,204 +1,253 @@
 /* ============================================================================
  * LOCATION-SHARING SOCIAL DISCONNECTION PARADIGM
- * Condition: COOR Condition (Coordinated Movement)
- * Total sequence: 33 s
+ * Condition: COOR — G and M meet at junction (~30s), then BOTH head up
+ *            Kasif Hoca Sokağı (left/north V-arm) side by side
+ *
+ * ── MOVEMENT TABLE (global seconds) ────────────────────────────────────────
+ *  t         G                              M
+ *  0– 2    pause                          pause
+ *  2– 8    straight BG                    deviate BM_RIGHT       ← identical to JOIN
+ *  8–11    PAUSE (3s)                     straight BM            ← identical to JOIN
+ * 11–12    straight BG                    PAUSE (1s)             ← identical to JOIN
+ * 12–18    deviate BG_LEFT                straight BM            ← identical to JOIN
+ * 18–20    straight BG                    PAUSE (2s)             ← identical to JOIN
+ * 20–26    straight BG                    straight BM            ← identical to JOIN
+ * 26–28    PAUSE (2s)                     straight BM            ← identical to JOIN
+ * 28–30    straight BG                    PAUSE (2s)             ← identical to JOIN
+ *  ── MEET at junction ~30s ─────────────────────────────────────────────────
+ * 30–36    deviate BG_F_LEFT±10°          straight BM_FINAL      M leads → RT1
+ * 36–38    PAUSE (2s)                     PAUSE (2s)             both stop
+ * 38–44    straight BG_FINAL              deviate BM_F_RIGHT±10° G catches up
+ * 44–48    PAUSE (4s)                     straight BM_FINAL      M moves ahead
+ * 48–50    straight BG_FINAL              PAUSE (2s)             G catches up
+ * 50–53    deviate BG_F_RIGHT±10°         deviate BM_F_LEFT±10°  side-by-side wobble
+ * 53–56    deviate BG_F_LEFT±10°          deviate BM_F_RIGHT±10° symmetric — together
+ * 56–62    straight BG_FINAL              straight BM_FINAL      fully synchronised
+ *
+ * BG_FINAL = 346.3° (G30 → RT1)   BM_FINAL = 337.8° (M30 → RT1)
+ * Both agents head to ROAD_TARGET_1 (Kasif Hoca Sokağı).
+ * Marker pixel offset ±6px keeps both icons visible without altering ground positions.
  * ========================================================================== */
 
-const CONDITION = "COOR";
-const CONDITION_LABEL = "Coor Condition";
+const CONDITION         = "COOR";
+const CONDITION_LABEL = "Coordination Condition";
 
-// Map & Camera Settings
-const MAP_CENTER = [32.889145, 39.929722];
-const SCENE_ROTATION_DEG = 41;
-function rot(bearingDeg) { return (bearingDeg + SCENE_ROTATION_DEG + 360) % 360; }
-const MAP_ZOOM = 16.5;
+const MAP_CENTER         = [32.888799, 39.929662];
+const SCENE_ROTATION_DEG = 21;
+const MAP_ZOOM           = 17.0;
 
-const WALK_SPEED_MPS = 4.5;
+const WALK_SPEED_MPS = 1.5;
+const T_STABLE       = 2000;
+const T_FINAL_HOLD   = 3000;
 
-// Timeline parameters in milliseconds (Total = 33,000 ms)
-const T_STABLE = 4000;   // 0-4s: Hold
-const T_BLOCK1 = 12000;  // 4-16s: Move to meeting points
-const T_BLOCK2 = 2000;   // 16-18s: Hold at meeting points
-const T_BLOCK3 = 12000;  // 18-30s: Move together toward shared direction
-const T_BLOCK4 = 3000;   // 30-33s: Final hold
-const TOTAL_ANIMATION_DURATION = T_STABLE + T_BLOCK1 + T_BLOCK2 + T_BLOCK3 + T_BLOCK4;
-const FINAL_HOLD_DURATION = 0;
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function calculateBearing(start, end) {
-    const startLat = start[1] * Math.PI / 180;
-    const startLng = start[0] * Math.PI / 180;
-    const endLat   = end[1]   * Math.PI / 180;
-    const endLng   = end[0]   * Math.PI / 180;
-    const dLng = endLng - startLng;
-    const y = Math.sin(dLng) * Math.cos(endLat);
-    const x = Math.cos(startLat) * Math.sin(endLat) - Math.sin(startLat) * Math.cos(endLat) * Math.cos(dLng);
-    let brng = Math.atan2(y, x) * 180 / Math.PI;
-    return (brng + 360) % 360;
+    const r = d => d * Math.PI / 180;
+    const dLng = r(end[0] - start[0]);
+    const y = Math.sin(dLng) * Math.cos(r(end[1]));
+    const x = Math.cos(r(start[1])) * Math.sin(r(end[1]))
+            - Math.sin(r(start[1])) * Math.cos(r(end[1])) * Math.cos(dLng);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 }
 
-// Konumlar [Lng, Lat]
+const EARTH_RADIUS_M = 6378137;
+function offsetMeters(origin, bearingDeg, meters) {
+    const b = bearingDeg * Math.PI / 180;
+    const dLat = (meters * Math.cos(b) / EARTH_RADIUS_M) * 180 / Math.PI;
+    const dLng = (meters * Math.sin(b) /
+        (EARTH_RADIUS_M * Math.cos(origin[1] * Math.PI / 180))) * 180 / Math.PI;
+    return [origin[0] + dLng, origin[1] + dLat];
+}
+
+function buildPureDrift(totalDur, driftBearing) {
+    return [{ d: totalDur, b: driftBearing }];
+}
+
+// ── Locations ──────────────────────────────────────────────────────────────────
+
 const START_G = [32.888409, 39.929681];
 const START_M = [32.889090, 39.929422];
 const START_U = [32.888559, 39.929150];
 
-// Güncellenen buluşma noktaları [Lng, Lat]
-const MEET_G = [32.888723, 39.929570]; 
-const MEET_M = [32.888807, 39.929533]; 
+const TARGET_G = [32.888455, 39.930278];
+const TARGET_M = [32.890168, 39.929707];
 
-// 18-30s ortak yön hedefi
-const DIR_SHARED = [32.889164, 39.930162];
+const JUNCTION      = [32.888752, 39.929566];
+const ROAD_TARGET_1 = [32.888541, 39.930241];  // Kasif Hoca Sokağı — both agents target this
+const ROAD_TARGET_2 = [32.889835, 39.929885];  // right arm (drawn on map, unused by agents)
 
-// Virtual roads için
-const ROAD_START    = [32.888752, 39.929566];
-const ROAD_TARGET_1 = [32.888541, 39.930241];
-const ROAD_TARGET_2 = [32.889835, 39.929885];
+// ── Approach bearings (toward JUNCTION) ──────────────────────────────────────
+const BG = calculateBearing(START_G, JUNCTION);   // ≈ 113.6°
+const BM = calculateBearing(START_M, JUNCTION);   // ≈ 299.1°
 
-const EARTH_RADIUS_M = 6378137;
+const BG_LEFT  = (BG - 90 + 360) % 360;   // ≈  23.6° (approach deviation)
+const BM_RIGHT = (BM + 90) % 360;          // ≈  29.1° (approach deviation)
 
-function offsetMeters(origin, bearingDeg, meters) {
-    const b = bearingDeg * Math.PI / 180;
-    const dNorth = meters * Math.cos(b);
-    const dEast  = meters * Math.sin(b);
-    const dLat = (dNorth / EARTH_RADIUS_M) * 180 / Math.PI;
-    const dLng = (dEast / (EARTH_RADIUS_M * Math.cos(origin[1] * Math.PI / 180))) * 180 / Math.PI;
-    return [origin[0] + dLng, origin[1] + dLat];
-}
+// ── Post-meeting bearings: both agents aim at RT1 from their t=30s positions ──
+// G30 ≈ [32.888725, 39.929663]  →  RT1: BG_FINAL ≈ 346.3°
+// M30 ≈ [32.888880, 39.929604]  →  RT1: BM_FINAL ≈ 337.8°
+// Both enter Kasif Hoca Sokağı; lateral gap narrows gradually
+const BG_FINAL = calculateBearing([32.888725, 39.929663], ROAD_TARGET_1);  // ≈ 346.3°
+const BM_FINAL = calculateBearing([32.888880, 39.929604], ROAD_TARGET_1);  // ≈ 337.8°
+
+// Narrow ±10° deviations — natural wobble on the same road arm
+const DEV = 10;
+const BG_F_LEFT  = (BG_FINAL - DEV + 360) % 360;  // ≈ 336°
+const BG_F_RIGHT = (BG_FINAL + DEV) % 360;         // ≈ 356°
+const BM_F_LEFT  = (BM_FINAL - DEV + 360) % 360;  // ≈ 328°
+const BM_F_RIGHT = (BM_FINAL + DEV) % 360;         // ≈ 348°
+
+// ── Schedules ─────────────────────────────────────────────────────────────────
+
+const SCHEDULE_G = [
+    // ── APPROACH (0–30s): identical to JOIN ──────────────────────────────────
+    { d: 2,  b: null },                   // global  0– 2  pause
+    { d: 6,  b: BG },                     // global  2– 8  straight → junction
+    { d: 3,  b: null },                   // global  8–11  PAUSE (3s)
+    { d: 1,  b: BG },                     // global 11–12  straight → junction
+    ...buildPureDrift(6, BG_LEFT),        // global 12–18  deviate left
+    { d: 2,  b: BG },                     // global 18–20  straight → junction
+    { d: 6,  b: BG },                     // global 20–26  straight → junction
+    { d: 2,  b: null },                   // global 26–28  PAUSE (2s)
+    { d: 2,  b: BG },                     // global 28–30  straight → junction
+    // ── COORDINATION (30–62s): G → RT1 (Kasif Hoca Sokağı) ───────────────
+    ...buildPureDrift(6, BG_F_LEFT),      // global 30–36  deviate ±10° (approaching)
+    { d: 2,  b: null },                   // global 36–38  PAUSE (2s)
+    { d: 6,  b: BG_FINAL },              // global 38–44  straight → RT1
+    { d: 4,  b: null },                   // global 44–48  PAUSE (4s)
+    { d: 2,  b: BG_FINAL },              // global 48–50  straight → RT1
+    ...buildPureDrift(3, BG_F_RIGHT),     // global 50–53  deviate ±10°
+    ...buildPureDrift(3, BG_F_LEFT),      // global 53–56  deviate ±10°
+    { d: 6,  b: BG_FINAL },              // global 56–62  straight → RT1 fully in sync
+];
+
+const SCHEDULE_M = [
+    // ── APPROACH (0–30s): identical to JOIN ──────────────────────────────────
+    { d: 2,  b: null },                   // global  0– 2  pause
+    ...buildPureDrift(6, BM_RIGHT),       // global  2– 8  deviate right
+    { d: 3,  b: BM },                     // global  8–11  straight → junction
+    { d: 1,  b: null },                   // global 11–12  PAUSE (1s)
+    { d: 6,  b: BM },                     // global 12–18  straight → junction
+    { d: 2,  b: null },                   // global 18–20  PAUSE (2s)
+    { d: 6,  b: BM },                     // global 20–26  straight → junction
+    { d: 2,  b: BM },                     // global 26–28  straight → junction
+    { d: 2,  b: null },                   // global 28–30  PAUSE (2s)
+    // ── COORDINATION (30–62s): M → RT1 (Kasif Hoca Sokağı), M leads ───────
+    { d: 6,  b: BM_FINAL },              // global 30–36  straight → RT1 (M leads)
+    { d: 2,  b: null },                   // global 36–38  PAUSE (2s)
+    ...buildPureDrift(6, BM_F_RIGHT),     // global 38–44  deviate ±10° (G catches up)
+    { d: 4,  b: BM_FINAL },              // global 44–48  straight → RT1
+    { d: 2,  b: null },                   // global 48–50  PAUSE (2s)
+    ...buildPureDrift(3, BM_F_LEFT),      // global 50–53  deviate ±10°
+    ...buildPureDrift(3, BM_F_RIGHT),     // global 53–56  deviate ±10°
+    { d: 6,  b: BM_FINAL },              // global 56–62  straight → RT1 fully in sync
+];
+
+// ── Runtime ───────────────────────────────────────────────────────────────────
+
+function scheduleTotalSeconds(s) { return s.reduce((a, seg) => a + seg.d, 0); }
+
+const ACTIVE_MS_G = scheduleTotalSeconds(SCHEDULE_G) * 1000;
+const ACTIVE_MS_M = scheduleTotalSeconds(SCHEDULE_M) * 1000;
+const TOTAL_ANIMATION_DURATION = T_STABLE + Math.max(ACTIVE_MS_G, ACTIVE_MS_M) + T_FINAL_HOLD;
 
 const positions = { leftNode: START_G, rightNode: START_M, mainNode: START_U };
-
 const people = [
     { id: "leftNode",  markerType: "grey-letter-dot", initial: "G" },
     { id: "rightNode", markerType: "grey-letter-dot", initial: "M" },
-    { id: "mainNode",  markerType: "blue-pulse-dot" }
+    { id: "mainNode",  markerType: "blue-pulse-dot"  }
 ];
 
-const EASE_MIX = 0.30;
-function easeFraction(f) {
-    const smooth = f * f * (3 - 2 * f);
-    return (1 - EASE_MIX) * f + EASE_MIX * smooth;
+function buildWaypoints(startPos, segments) {
+    let pos = startPos, t = 0;
+    const keys = [{ t: 0, pos }];
+    for (const seg of segments) {
+        t += seg.d * 1000;
+        if (seg.b !== null) pos = offsetMeters(pos, seg.b, WALK_SPEED_MPS * seg.d);
+        keys.push({ t, pos });
+    }
+    return keys;
 }
 
-const GPS_UPDATE_MS = 1000;
-const GPS_TWEEN_MS  = 900;
-const GPS_OFFSET_MS = { G: 0, M: 500 };
-
-function truePosition(who, elapsedMs) {
-    const tStableEnd = T_STABLE;                        
-    const tBlock1End = T_STABLE + T_BLOCK1;             
-    const tBlock2End = T_STABLE + T_BLOCK1 + T_BLOCK2;  
-    const tBlock3End = tBlock2End + T_BLOCK3;            
-
-    const startPos  = who === "G" ? START_G : START_M;
-    const meetPos   = who === "G" ? MEET_G  : MEET_M;
-
-    if (elapsedMs <= tStableEnd) {
-        return startPos;
+function positionAt(keys, tMs) {
+    if (tMs <= 0) return keys[0].pos;
+    for (let i = 1; i < keys.length; i++) {
+        if (tMs <= keys[i].t) {
+            const a = keys[i - 1], b = keys[i];
+            const f = (tMs - a.t) / (b.t - a.t);
+            return [
+                a.pos[0] + (b.pos[0] - a.pos[0]) * f,
+                a.pos[1] + (b.pos[1] - a.pos[1]) * f
+            ];
+        }
     }
-
-    if (elapsedMs <= tBlock1End) {
-        const f = easeFraction((elapsedMs - tStableEnd) / T_BLOCK1);
-        return [
-            startPos[0] + (meetPos[0] - startPos[0]) * f,
-            startPos[1] + (meetPos[1] - startPos[1]) * f
-        ];
-    }
-
-    if (elapsedMs <= tBlock2End) {
-        return meetPos;
-    }
-
-    if (elapsedMs <= tBlock3End) {
-        const elapsed4 = elapsedMs - tBlock2End;
-        const bearing = calculateBearing(meetPos, DIR_SHARED);
-        const distanceTraveled = WALK_SPEED_MPS * (elapsed4 / 1000);
-        return offsetMeters(meetPos, bearing, distanceTraveled);
-    }
-
-    const bearing = calculateBearing(meetPos, DIR_SHARED);
-    const distanceTraveled = WALK_SPEED_MPS * (T_BLOCK3 / 1000);
-    return offsetMeters(meetPos, bearing, distanceTraveled);
+    return keys[keys.length - 1].pos;
 }
+
+const WAYPOINTS_G = buildWaypoints(START_G, SCHEDULE_G);
+const WAYPOINTS_M = buildWaypoints(START_M, SCHEDULE_M);
 
 function agentPosition(who, elapsedMs) {
-    const offset = GPS_OFFSET_MS[who];
-    const k = Math.floor((elapsedMs - offset) / GPS_UPDATE_MS);
-    const tFix  = offset + k * GPS_UPDATE_MS;
-    const tPrev = tFix - GPS_UPDATE_MS;
-    const from = truePosition(who, Math.max(0, tPrev));
-    const to   = truePosition(who, Math.max(0, tFix));
-    const since = elapsedMs - tFix;
-    const f = (since >= GPS_TWEEN_MS) ? 1 : easeFraction(since / GPS_TWEEN_MS);
-    return [from[0] + (to[0] - from[0]) * f,
-            from[1] + (to[1] - from[1]) * f];
+    const keys    = (who === "G") ? WAYPOINTS_G : WAYPOINTS_M;
+    const localMs = elapsedMs - T_STABLE;
+    if (localMs < 0) return keys[0].pos;
+    return positionAt(keys, localMs);
 }
 
 let animationStarted = false;
-let userNickname = "";
-let map = null;
+let userNickname     = "";
+let map              = null;
 const markerInstances = {};
-let startTime = null;
-let animationStartWallClock = null;
+let startTime        = null;
 
 function createMarkerElement(person) {
-    const clusterEl = document.createElement("div");
-    clusterEl.className = "marker-cluster";
-    const agentEl = document.createElement("div");
-    agentEl.className = "agent-node";
-
+    const wrap = document.createElement("div"); wrap.className = "marker-cluster";
+    const node = document.createElement("div"); node.className = "agent-node";
     if (person.markerType === "blue-pulse-dot") {
-        const mapsDotContainer = document.createElement("div");
-        mapsDotContainer.className = "google-maps-dot-container";
-        const breathingPulse = document.createElement("div");
-        breathingPulse.className = "google-maps-pulse";
-        const solidCore = document.createElement("div");
-        solidCore.className = "google-maps-core";
-        mapsDotContainer.appendChild(breathingPulse);
-        mapsDotContainer.appendChild(solidCore);
-        agentEl.appendChild(mapsDotContainer);
-        const labelEl = document.createElement("div");
-        labelEl.className = "agent-label";
-        labelEl.textContent = userNickname || "User";
-        agentEl.appendChild(labelEl);
-        agentEl.setAttribute("role", "img");
-        agentEl.setAttribute("aria-label", (userNickname || "User") + " location on map");
-    } else if (person.markerType === "grey-letter-dot") {
-        const greyDot = document.createElement("div");
-        greyDot.className = "experimental-grey-letter-dot";
-        greyDot.textContent = person.initial;
-        agentEl.appendChild(greyDot);
-        agentEl.setAttribute("role", "img");
-        agentEl.setAttribute("aria-label", "Participant " + person.initial + " location on map");
+        const c = document.createElement("div"); c.className = "google-maps-dot-container";
+        const p = document.createElement("div"); p.className = "google-maps-pulse";
+        const s = document.createElement("div"); s.className = "google-maps-core";
+        c.appendChild(p); c.appendChild(s); node.appendChild(c);
+        const lbl = document.createElement("div"); lbl.className = "agent-label";
+        lbl.textContent = userNickname || "User"; node.appendChild(lbl);
+        node.setAttribute("role", "img");
+        node.setAttribute("aria-label", (userNickname || "User") + " location on map");
+    } else {
+        const dot = document.createElement("div");
+        dot.className = "experimental-grey-letter-dot";
+        dot.textContent = person.initial; node.appendChild(dot);
+        node.setAttribute("role", "img");
+        node.setAttribute("aria-label", "Participant " + person.initial + " location on map");
     }
-    clusterEl.appendChild(agentEl);
-    return clusterEl;
+    wrap.appendChild(node); return wrap;
 }
+
+// Pixel offset per marker: G left, M right — visually separated on screen, ground positions unchanged
+const MARKER_OFFSET = {
+    leftNode:  [-6, 0],    // G: 6px left
+    rightNode: [ 6, 0],    // M: 6px right
+    mainNode:  [  0, 0]
+};
 
 function initMarkers() {
     if (!map) return;
-    people.forEach(person => {
-        const marker = new maplibregl.Marker({ element: createMarkerElement(person), anchor: "center" })
-            .setLngLat(positions[person.id])
-            .addTo(map);
-        markerInstances[person.id] = marker;
+    people.forEach(p => {
+        const offset = MARKER_OFFSET[p.id] || [0, 0];
+        const marker = new maplibregl.Marker({ element: createMarkerElement(p), anchor: "center", offset })
+            .setLngLat(positions[p.id]).addTo(map);
+        markerInstances[p.id] = marker;
     });
 }
 
-function animateNodes(timestamp) {
+function animateNodes(ts) {
     if (!animationStarted) return;
-    if (!startTime) startTime = timestamp;
-    const elapsed = timestamp - startTime;
-
-    const g = agentPosition("G", elapsed);
-    const m = agentPosition("M", elapsed);
-
-    if (markerInstances["leftNode"])  markerInstances["leftNode"].setLngLat(g);
-    if (markerInstances["rightNode"]) markerInstances["rightNode"].setLngLat(m);
-
-    if (elapsed < TOTAL_ANIMATION_DURATION) {
-        requestAnimationFrame(animateNodes);
-    } else {
-        sendCompletionSignal("normal");
-    }
+    if (!startTime) startTime = ts;
+    const el = ts - startTime;
+    if (markerInstances["leftNode"])  markerInstances["leftNode"].setLngLat(agentPosition("G", el));
+    if (markerInstances["rightNode"]) markerInstances["rightNode"].setLngLat(agentPosition("M", el));
+    if (el < TOTAL_ANIMATION_DURATION) requestAnimationFrame(animateNodes);
+    else sendCompletionSignal("normal");
 }
 
 const SESSION_ID = "sess_" + Date.now() + "_" + Math.random().toString(36).slice(2, 9);
@@ -206,264 +255,86 @@ let hasSentCompletion = false;
 
 function buildPayload(reason) {
     return {
-        type: "MAP_ANIMATION_COMPLETE",
-        condition: CONDITION,
-        conditionLabel: CONDITION_LABEL,
-        sessionId: SESSION_ID,
-        status: "complete",
-        reason: reason,
-        elapsedMs: TOTAL_ANIMATION_DURATION,
-        timestamp: Date.now()
+        type: "MAP_ANIMATION_COMPLETE", condition: CONDITION,
+        conditionLabel: CONDITION_LABEL, sessionId: SESSION_ID,
+        status: "complete", reason, elapsedMs: TOTAL_ANIMATION_DURATION, timestamp: Date.now()
     };
 }
-
 function sendCompletionSignal(reason) {
-    if (hasSentCompletion) return;
-    hasSentCompletion = true;
-    const payload = buildPayload(reason);
-    try {
-        if (window.parent) window.parent.postMessage(payload, "*");
-    } catch (e) {
-        console.warn("postMessage failed:", e);
-    }
+    if (hasSentCompletion) return; hasSentCompletion = true;
+    try { if (window.parent) window.parent.postMessage(buildPayload(reason), "*"); }
+    catch(e) { console.warn("postMessage failed:", e); }
 }
 
-const GLOBAL_TIMEOUT_MS = 240 * 1000;
+const GLOBAL_TIMEOUT_MS    = 240 * 1000;
 const ANIMATION_TIMEOUT_MS = TOTAL_ANIMATION_DURATION + 15000;
 
 function injectUIDesignStyles() {
     if (document.getElementById("study-ui-styles")) return;
-    const style = document.createElement('style');
-    style.id = "study-ui-styles";
+    const style = document.createElement("style"); style.id = "study-ui-styles";
     style.innerHTML = `
-        :root {
-            --brand-green: rgba(220, 242, 224, 0.95);
-        }
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
-            background-color: #f2efe6;
-        }
-
-        #experiment-flow-screen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #ffffff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 3000;
-            transition: opacity 0.5s ease, transform 0.5s ease;
-        }
-        .flow-step {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 20px;
-            text-align: center;
-            padding: 0 20px;
-        }
-        .flow-step.hidden {
-            display: none !important;
-        }
-
-        .spinner {
-            width: 60px;
-            height: 60px;
-            border: 4px solid rgba(43, 108, 176, 0.15);
-            border-top: 4px solid #2b6cb0;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .modern-success-badge {
-            width: 56px;
-            height: 56px;
-            background: #e6f4ea;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto;
-            box-shadow: 0 4px 12px rgba(46, 125, 50, 0.12);
-        }
-        .modern-success-badge svg {
-            width: 28px;
-            height: 28px;
-            color: #137333;
-            stroke-width: 3.8;
-        }
-
-        .flow-text {
-            font-size: 16px;
-            font-weight: 600;
-            color: #1a1a1a;
-            letter-spacing: -0.3px;
-            margin: 0;
-        }
-
-        .nickname-container {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            width: 280px;
-        }
-        .nickname-input {
-            padding: 12px 16px;
-            border: 1px solid #cbd5e1;
-            border-radius: 12px;
-            font-size: 16px;
-            outline: none;
-            transition: border-color 0.2s;
-            text-align: center;
-        }
-        .nickname-input:focus {
-            border-color: #2b6cb0;
-            box-shadow: 0 0 0 3px rgba(43, 108, 176, 0.15);
-        }
-        .nickname-btn {
-            padding: 12px;
-            background: #2b6cb0;
-            color: white;
-            border: none;
-            border-radius: 12px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s, transform 0.1s;
-        }
-        .nickname-btn:active {
-            transform: scale(0.98);
-            background: #2c5282;
-        }
-
-        #modern-app-header {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 64px;
-            background: #ffffff;
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 2000;
-            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
-        }
-        .header-logo {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 19px;
-            font-weight: 700;
-            letter-spacing: -0.4px;
-            color: #1a1a1a;
-        }
-        .logo-icon-wrapper {
-            width: 34px;
-            height: 34px;
-            background: #f0f4f8;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: inset 0 1px 2px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.04);
-        }
-        .logo-icon-wrapper svg {
-            color: #2b6cb0;
-        }
-
-        #container {
-            width: 100%;
-            height: 100%;
-            position: relative;
-        }
-        #map {
-            width: 100%;
-            height: 100%;
-        }
-
-        .experimental-grey-letter-dot {
-            width: 37.8px;
-            height: 37.8px;
-            background: #64748b;
-            color: white;
-            border: 2.25px solid #ffffff;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 17px;
-            box-shadow: 0 3px 8px rgba(0,0,0,0.3);
-        }
-        .google-maps-dot-container {
-            position: relative;
-            width: 48px;
-            height: 48px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .google-maps-pulse {
-            position: absolute;
-            width: 48px;
-            height: 48px;
-            background: rgba(66, 133, 244, 0.4);
-            border-radius: 50%;
-            animation: google-pulse 2s infinite ease-out;
-        }
-        .google-maps-core {
-            position: relative;
-            width: 21px;
-            height: 21px;
-            background: #4285F4;
-            border: 3px solid #ffffff;
-            border-radius: 50%;
-            box-shadow: 0 3px 8px rgba(0,0,0,0.35);
-        }
-        @keyframes google-pulse {
-            0% { transform: scale(0.6); opacity: 1; }
-            100% { transform: scale(2.2); opacity: 0; }
-        }
-        .agent-label {
-            position: absolute;
-            bottom: -24px;
-            background: rgba(255, 255, 255, 0.95);
-            padding: 3px 9px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 600;
-            color: #1a1a1a;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-            white-space: nowrap;
-        }
+        :root { --brand-green: rgba(220,242,224,.95) }
+        body, html { margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+            font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",Roboto,sans-serif;
+            background-color:#f2efe6 }
+        #experiment-flow-screen { position:fixed; top:0; left:0; width:100%; height:100%;
+            background:#fff; display:flex; align-items:center; justify-content:center;
+            z-index:3000; transition:opacity .5s ease,transform .5s ease }
+        .flow-step { display:flex; flex-direction:column; align-items:center; gap:20px;
+            text-align:center; padding:0 20px }
+        .flow-step.hidden { display:none !important }
+        .spinner { width:60px; height:60px; border:4px solid rgba(43,108,176,.15);
+            border-top:4px solid #2b6cb0; border-radius:50%; animation:spin .8s linear infinite }
+        @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+        .modern-success-badge { width:56px; height:56px; background:#e6f4ea; border-radius:50%;
+            display:flex; align-items:center; justify-content:center; margin:0 auto;
+            box-shadow:0 4px 12px rgba(46,125,50,.12) }
+        .modern-success-badge svg { width:28px; height:28px; color:#137333; stroke-width:3.8 }
+        .flow-text { font-size:16px; font-weight:600; color:#1a1a1a; letter-spacing:-.3px; margin:0 }
+        #modern-app-header { position:absolute; top:0; left:0; width:100%; height:64px;
+            background:#fff; backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+            border-bottom:1px solid rgba(0,0,0,.06); display:flex; align-items:center;
+            justify-content:center; z-index:2000; box-shadow:0 4px 24px rgba(0,0,0,.08) }
+        .header-logo { display:flex; align-items:center; gap:10px; font-size:19px; font-weight:700;
+            letter-spacing:-.4px; color:#1a1a1a }
+        .logo-icon-wrapper { width:34px; height:34px; background:#f0f4f8; border-radius:50%;
+            display:flex; align-items:center; justify-content:center;
+            box-shadow:inset 0 1px 2px rgba(0,0,0,.06),0 2px 4px rgba(0,0,0,.04) }
+        .logo-icon-wrapper svg { color:#2b6cb0 }
+        #container { width:100%; height:100%; position:relative }
+        #map { width:100%; height:100% }
+        .experimental-grey-letter-dot { width:37.8px; height:37.8px; background:#64748b;
+            color:#fff; border:2.25px solid #fff; border-radius:50%; display:flex;
+            align-items:center; justify-content:center; font-weight:700; font-size:17px;
+            box-shadow:0 3px 8px rgba(0,0,0,.3) }
+        .google-maps-dot-container { position:relative; width:48px; height:48px;
+            display:flex; align-items:center; justify-content:center }
+        .google-maps-pulse { position:absolute; width:48px; height:48px;
+            background:rgba(66,133,244,.4); border-radius:50%;
+            animation:google-pulse 2s infinite ease-out }
+        .google-maps-core { position:relative; width:21px; height:21px; background:#4285F4;
+            border:3px solid #fff; border-radius:50%; box-shadow:0 3px 8px rgba(0,0,0,.35) }
+        @keyframes google-pulse { 0%{transform:scale(.6);opacity:1} 100%{transform:scale(2.2);opacity:0} }
+        .agent-label { position:absolute; bottom:-24px; background:rgba(255,255,255,.95);
+            padding:3px 9px; border-radius:6px; font-size:12px; font-weight:600; color:#1a1a1a;
+            box-shadow:0 2px 6px rgba(0,0,0,.15); white-space:nowrap }
+        .login-container { display:flex; flex-direction:column; align-items:center; gap:16px; width:300px }
+        .instruction { font-size:15px; color:#374151; text-align:center; margin:0; line-height:1.5 }
+        #nickname-input { width:100%; padding:12px 16px; border:1px solid #cbd5e1; border-radius:12px;
+            font-size:16px; outline:none; transition:border-color .2s; text-align:center; box-sizing:border-box }
+        #nickname-input:focus { border-color:#2b6cb0; box-shadow:0 0 0 3px rgba(43,108,176,.15) }
+        .input-note { font-size:13px; color:#6b7280; text-align:center; margin:0; line-height:1.4 }
+        #submit-btn { width:48px; height:48px; background:#2b6cb0; color:#fff; border:none;
+            border-radius:50%; font-size:20px; cursor:pointer; display:flex; align-items:center;
+            justify-content:center; transition:background .2s,transform .1s }
+        #submit-btn:active { transform:scale(.96); background:#2c5282 }
     `;
     document.head.appendChild(style);
 }
 
 function bootstrap() {
     injectUIDesignStyles();
-
-    setTimeout(() => {
-        if (!hasSentCompletion) {
-            sendCompletionSignal("timeout");
-        }
-    }, GLOBAL_TIMEOUT_MS);
+    setTimeout(() => { if (!hasSentCompletion) sendCompletionSignal("timeout"); }, GLOBAL_TIMEOUT_MS);
 
     const flowScreen     = document.getElementById("experiment-flow-screen");
     const stepConnecting = document.getElementById("step-connecting");
@@ -473,26 +344,22 @@ function bootstrap() {
     const nicknameInput  = document.getElementById("nickname-input");
     const submitBtn      = document.getElementById("submit-btn");
 
-    if (stepJoined) {
-        let badge = stepJoined.querySelector('.modern-success-badge');
-        if (!badge) {
-            badge = document.createElement('div');
-            badge.className = 'modern-success-badge';
-            badge.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-            stepJoined.insertBefore(badge, stepJoined.firstChild);
-        }
+    if (stepJoined && !stepJoined.querySelector(".modern-success-badge")) {
+        const b = document.createElement("div"); b.className = "modern-success-badge";
+        b.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+        stepJoined.insertBefore(b, stepJoined.firstChild);
     }
 
     function startExperimentFlow() {
         setTimeout(() => {
             if (stepConnecting) stepConnecting.classList.add("hidden");
-            if (stepWaiting) stepWaiting.classList.remove("hidden");
+            if (stepWaiting)    stepWaiting.classList.remove("hidden");
             setTimeout(() => {
                 if (stepWaiting) stepWaiting.classList.add("hidden");
-                if (stepJoined) stepJoined.classList.remove("hidden");
+                if (stepJoined)  stepJoined.classList.remove("hidden");
                 setTimeout(() => {
-                    if (stepJoined) stepJoined.classList.add("hidden");
-                    if (stepNickname) stepNickname.classList.remove("hidden");
+                    if (stepJoined)    stepJoined.classList.add("hidden");
+                    if (stepNickname)  stepNickname.classList.remove("hidden");
                     if (nicknameInput) nicknameInput.focus();
                 }, 4000);
             }, 5000);
@@ -501,43 +368,26 @@ function bootstrap() {
 
     function beginAnimation() {
         animationStarted = true;
-        animationStartWallClock = Date.now();
-
-        const modernHeader = document.createElement('div');
-        modernHeader.id = 'modern-app-header';
-        modernHeader.innerHTML = `
-            <div class="header-logo">
-                <div class="logo-icon-wrapper">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
-                        <circle cx="12" cy="10" r="3"></circle>
-                    </svg>
-                </div>
-                NeredeApp
-            </div>
-        `;
-        document.body.appendChild(modernHeader);
-
-        setTimeout(() => {
-            if (!hasSentCompletion) {
-                sendCompletionSignal("timeout");
-            }
-        }, ANIMATION_TIMEOUT_MS);
+        const hdr = document.createElement("div"); hdr.id = "modern-app-header";
+        hdr.innerHTML = `<div class="header-logo"><div class="logo-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                <circle cx="12" cy="10" r="3"></circle>
+            </svg></div>DoveSeiApp</div>`;
+        document.body.appendChild(hdr);
+        setTimeout(() => { if (!hasSentCompletion) sendCompletionSignal("timeout"); }, ANIMATION_TIMEOUT_MS);
         requestAnimationFrame(animateNodes);
     }
 
     function handleLoginSubmit() {
         const val = nicknameInput ? nicknameInput.value.trim() : "Participant";
-        if (val === "") { alert("Lütfen geçerli bir takma ad girin."); return; }
+        if (!val) { alert("Inserisci un nickname valido."); return; }
         userNickname = val;
-        if (flowScreen) {
-            flowScreen.style.opacity = "0";
-            flowScreen.style.transform = "scale(0.95)";
-        }
+        if (flowScreen) { flowScreen.style.opacity = "0"; flowScreen.style.transform = "scale(0.95)"; }
         setTimeout(() => {
             if (flowScreen) flowScreen.style.display = "none";
-            initMarkers();
-            beginAnimation();
+            initMarkers(); beginAnimation();
         }, 500);
     }
 
@@ -547,32 +397,24 @@ function bootstrap() {
     }
     if (nicknameInput) {
         nicknameInput.setAttribute("aria-label", "Enter your nickname");
-        nicknameInput.addEventListener("keypress", (e) => { if (e.key === "Enter") handleLoginSubmit(); });
+        nicknameInput.addEventListener("keypress", e => { if (e.key === "Enter") handleLoginSubmit(); });
     }
 
-    let mapHasLoaded = false;
-    let mapLoadTimeoutId = null;
+    let mapHasLoaded = false, mapLoadTimeoutId = null;
 
     function showMapLoadFallback() {
         if (mapHasLoaded) return;
-        const mapContainer = document.getElementById("map");
-        if (mapContainer) mapContainer.style.visibility = "hidden";
-
-        const fallback = document.createElement("div");
-        fallback.id = "map-load-fallback";
-        fallback.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;" +
-            "display:flex;align-items:center;justify-content:center;background:#f7f7f7;" +
-            "font-family:sans-serif;text-align:center;padding:24px;box-sizing:border-box;z-index:5000;";
-        fallback.innerHTML =
-            '<div style="max-width:420px;">' +
-            '<p style="font-size:17px;color:#333;margin-bottom:8px;">Harita şu anda yüklenemedi.</p>' +
-            '<p style="font-size:14px;color:#666;">Bağlantınız kontrol ediliyor, lütfen bekleyiniz.</p>' +
-            "</div>";
-        document.body.appendChild(fallback);
-
+        const mc = document.getElementById("map"); if (mc) mc.style.visibility = "hidden";
+        const fb = document.createElement("div"); fb.id = "map-load-fallback";
+        fb.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;display:flex;" +
+            "align-items:center;justify-content:center;background:#f7f7f7;font-family:sans-serif;" +
+            "text-align:center;padding:24px;box-sizing:border-box;z-index:5000;";
+        fb.innerHTML = '<div style="max-width:420px;">' +
+            '<p style="font-size:17px;color:#333;margin-bottom:8px;">La mappa non è al momento disponibile.</p>' +
+            '<p style="font-size:14px;color:#666;">Verifica della connessione in corso, attendere prego.</p></div>';
+        document.body.appendChild(fb);
         if (!animationStarted) {
             animationStarted = true;
-            animationStartWallClock = Date.now();
             setTimeout(() => sendCompletionSignal("map-load-failed"), TOTAL_ANIMATION_DURATION);
         }
     }
@@ -582,91 +424,46 @@ function bootstrap() {
 
     function declutterBasemap() {
         try {
-            const layers = (map.getStyle() && map.getStyle().layers) || [];
-            layers.forEach(layer => {
-                const id = String(layer.id || "").toLowerCase();
-                const srcLayer = String(layer["source-layer"] || "").toLowerCase();
-                const isExtrusion = layer.type === "fill-extrusion";
-
-                if (KEEP_VISIBLE.test(id) || srcLayer === "park") {
-                    if (!isExtrusion) return;
-                }
-                if (isExtrusion || HIDDEN_SOURCE_LAYERS.indexOf(srcLayer) !== -1) {
-                    try { map.setLayoutProperty(layer.id, "visibility", "none"); } catch (e) {}
-                }
+            (map.getStyle().layers || []).forEach(l => {
+                const id  = String(l.id || "").toLowerCase();
+                const sl  = String(l["source-layer"] || "").toLowerCase();
+                const isExt = l.type === "fill-extrusion";
+                if (KEEP_VISIBLE.test(id) || sl === "park") { if (!isExt) return; }
+                if (isExt || HIDDEN_SOURCE_LAYERS.includes(sl))
+                    try { map.setLayoutProperty(l.id, "visibility", "none"); } catch(e) {}
             });
-        } catch (e) {}
+        } catch(e) {}
     }
 
-    const PALETTE = {
-        land:      "#f2efe6",
-        green:     "#bfe3ab",
-        greenSoft: "#d6ead0",
-        greenDeep: "#a8d493",
-        water:     "#a9d8f0",
-        road:      "#ffffff",
-        roadCase:  "#e4dfd3",
-        building:  "#e8e3d8",
-        text:      "#5a6b5e",
-        textHalo:  "#ffffff"
+    const PAL = {
+        land:"#f2efe6", green:"#bfe3ab", greenSoft:"#d6ead0", greenDeep:"#a8d493",
+        water:"#a9d8f0", road:"#ffffff", roadCase:"#e4dfd3", building:"#e8e3d8",
+        text:"#5a6b5e", textHalo:"#ffffff"
     };
-
-    function paint(id, prop, value) {
-        try { map.setPaintProperty(id, prop, value); } catch (e) {}
-    }
+    function paint(id, p, v) { try { map.setPaintProperty(id, p, v); } catch(e) {} }
 
     function applyFindMyPalette() {
         try {
-            const layers = (map.getStyle() && map.getStyle().layers) || [];
-            layers.forEach(layer => {
-                const id = String(layer.id || "").toLowerCase();
-                const sl = String(layer["source-layer"] || "").toLowerCase();
-                const t  = layer.type;
-                const isGreen = sl === "park" || /park|grass|wood|forest|garden|pitch|golf|cemetery|scrub|meadow|orchard/.test(id);
-                const isWater = sl === "water" || sl === "waterway" || /water|ocean|river|lake|sea|bay/.test(id);
-
-                if (t === "background") { paint(id, "background-color", PALETTE.land); return; }
-                if (isWater) {
-                    if (t === "fill") paint(id, "fill-color", PALETTE.water);
-                    if (t === "line") paint(id, "line-color", PALETTE.water);
-                    return;
-                }
-                if (isGreen) {
-                    if (t === "fill") { paint(id, "fill-color", PALETTE.green); paint(id, "fill-opacity", 1); }
-                    if (t === "line") paint(id, "line-color", PALETTE.greenDeep);
-                    return;
-                }
-                if (sl === "landcover") {
-                    if (t === "fill") { paint(id, "fill-color", PALETTE.greenSoft); paint(id, "fill-opacity", 0.9); }
-                    return;
-                }
-                if (sl === "landuse") {
-                    if (t === "fill") paint(id, "fill-color", PALETTE.land);
-                    return;
-                }
-                if (sl === "building") {
-                    if (t === "fill") { paint(id, "fill-color", PALETTE.building); paint(id, "fill-opacity", 0.85); }
-                    return;
-                }
-                if (sl === "transportation") {
-                    if (t === "line") {
-                        const casing = /casing|outline|bridge|tunnel/.test(id);
-                        paint(id, "line-color", casing ? PALETTE.roadCase : PALETTE.road);
-                    }
-                    return;
-                }
-                if (t === "symbol") {
-                    paint(id, "text-color", PALETTE.text);
-                    paint(id, "text-halo-color", PALETTE.textHalo);
-                    paint(id, "text-halo-width", 1.4);
-                }
+            (map.getStyle().layers || []).forEach(l => {
+                const id = String(l.id || "").toLowerCase();
+                const sl = String(l["source-layer"] || "").toLowerCase();
+                const t  = l.type;
+                const isG = sl === "park" || /park|grass|wood|forest|garden|pitch|golf|cemetery|scrub|meadow|orchard/.test(id);
+                const isW = sl === "water" || sl === "waterway" || /water|ocean|river|lake|sea|bay/.test(id);
+                if (t === "background") { paint(id, "background-color", PAL.land); return; }
+                if (isW) { if (t==="fill") paint(id,"fill-color",PAL.water); if (t==="line") paint(id,"line-color",PAL.water); return; }
+                if (isG) { if (t==="fill") { paint(id,"fill-color",PAL.green); paint(id,"fill-opacity",1); } if (t==="line") paint(id,"line-color",PAL.greenDeep); return; }
+                if (sl==="landcover") { if (t==="fill") { paint(id,"fill-color",PAL.greenSoft); paint(id,"fill-opacity",.9); } return; }
+                if (sl==="landuse")   { if (t==="fill") paint(id,"fill-color",PAL.land); return; }
+                if (sl==="building")  { if (t==="fill") { paint(id,"fill-color",PAL.building); paint(id,"fill-opacity",.85); } return; }
+                if (sl==="transportation") { if (t==="line") paint(id,"line-color",/casing|outline|bridge|tunnel/.test(id)?PAL.roadCase:PAL.road); return; }
+                if (t==="symbol") { paint(id,"text-color",PAL.text); paint(id,"text-halo-color",PAL.textHalo); paint(id,"text-halo-width",1.4); }
             });
-        } catch (e) {}
+        } catch(e) {}
     }
 
     startExperimentFlow();
 
-    const MAP_LOAD_TIMEOUT_MS = 8000;
     try {
         if (typeof maplibregl !== "undefined") {
             map = new maplibregl.Map({
@@ -676,95 +473,62 @@ function bootstrap() {
                 zoom: MAP_ZOOM,
                 minZoom: MAP_ZOOM,
                 maxZoom: MAP_ZOOM,
+                bearing: SCENE_ROTATION_DEG,
                 dragPan: false, doubleClickZoom: false, boxZoom: false,
                 keyboard: false, touchZoomRotate: false,
                 pixelRatio: window.devicePixelRatio || 2,
                 attributionControl: true
             });
 
-            mapLoadTimeoutId = setTimeout(() => {
-                if (!mapHasLoaded) showMapLoadFallback();
-            }, MAP_LOAD_TIMEOUT_MS);
+            mapLoadTimeoutId = setTimeout(() => { if (!mapHasLoaded) showMapLoadFallback(); }, 8000);
 
             map.on("load", () => {
-                mapHasLoaded = true;
-                if (mapLoadTimeoutId) clearTimeout(mapLoadTimeoutId);
+                mapHasLoaded = true; clearTimeout(mapLoadTimeoutId);
+                declutterBasemap(); applyFindMyPalette();
 
-                declutterBasemap();
-                applyFindMyPalette();
+                map.addSource("virtual-roads", { type: "geojson", data: { type: "FeatureCollection", features: [
+                    { type: "Feature", geometry: { type: "LineString", coordinates: [START_G, TARGET_G] } },
+                    { type: "Feature", geometry: { type: "LineString", coordinates: [START_M, TARGET_M] } },
+                    { type: "Feature", geometry: { type: "LineString", coordinates: [JUNCTION, ROAD_TARGET_1] } },
+                    { type: "Feature", geometry: { type: "LineString", coordinates: [JUNCTION, ROAD_TARGET_2] } },
+                    { type: "Feature", geometry: { type: "LineString", coordinates: [[32.888292,39.930351],[32.887327,39.930721]] } }
+                ]}});
 
-                map.addSource('virtual-roads', {
-                    'type': 'geojson',
-                    'data': {
-                        'type': 'FeatureCollection',
-                        'features': [
-                            { 'type': 'Feature', 'geometry': { 'type': 'LineString', 'coordinates': [START_G, [32.888455, 39.930278]] } },
-                            { 'type': 'Feature', 'geometry': { 'type': 'LineString', 'coordinates': [START_M, [32.890168, 39.929707]] } },
-                            { 'type': 'Feature', 'geometry': { 'type': 'LineString', 'coordinates': [ROAD_START, ROAD_TARGET_1] } },
-                            { 'type': 'Feature', 'geometry': { 'type': 'LineString', 'coordinates': [ROAD_START, ROAD_TARGET_2] } },
-                            { 'type': 'Feature', 'geometry': { 'type': 'LineString', 'coordinates': [[32.888292, 39.930351], [32.887327, 39.930721]] } }
-                        ]
-                    }
-                });
-
-                let firstRoadCoreId = null;
-                let firstBuildingOrTextId = null;
-
-                const layers = map.getStyle().layers;
-                for (const layer of layers) {
-                    const id = (layer.id || "").toLowerCase();
-                    const sl = (layer['source-layer'] || "").toLowerCase();
-                    if (!firstBuildingOrTextId && (layer.type === 'symbol' || sl === 'building' || layer.type === 'fill-extrusion')) {
-                        firstBuildingOrTextId = layer.id;
-                    }
-                    if (sl === 'transportation' && layer.type === 'line') {
-                        const isCasing = /casing|outline|bridge|tunnel/.test(id);
-                        if (!isCasing && !firstRoadCoreId) {
-                            firstRoadCoreId = layer.id;
-                        }
-                    }
+                let firstRoadLayerId = null;
+                for (const l of map.getStyle().layers) {
+                    const sl = (l["source-layer"] || "").toLowerCase();
+                    if (sl === "transportation") { firstRoadLayerId = l.id; break; }
                 }
 
                 map.addLayer({
-                    'id': 'virtual-roads-casing',
-                    'type': 'line',
-                    'source': 'virtual-roads',
-                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': '#e4dfd3', 'line-width': 12 }
-                }, firstRoadCoreId || firstBuildingOrTextId);
+                    id: "virtual-roads-casing", type: "line", source: "virtual-roads",
+                    layout: { "line-join": "round", "line-cap": "round" },
+                    paint: { "line-color": "#e4dfd3", "line-width": 12 }
+                }, firstRoadLayerId);
 
                 map.addLayer({
-                    'id': 'virtual-roads-core',
-                    'type': 'line',
-                    'source': 'virtual-roads',
-                    'layout': { 'line-join': 'round', 'line-cap': 'round' },
-                    'paint': { 'line-color': '#ffffff', 'line-width': 8 }
-                }, firstBuildingOrTextId);
+                    id: "virtual-roads-core", type: "line", source: "virtual-roads",
+                    layout: { "line-join": "round", "line-cap": "round" },
+                    paint: { "line-color": "#ffffff", "line-width": 8 }
+                }, firstRoadLayerId);
 
                 map.getCanvas().style.filter = "none";
             });
 
-            map.on("error", () => {
-                if (!mapHasLoaded) showMapLoadFallback();
-            });
+            map.on("error", () => { if (!mapHasLoaded) showMapLoadFallback(); });
         }
-    } catch (error) {
-        showMapLoadFallback();
-    }
+    } catch(e) { showMapLoadFallback(); }
 }
 
-if (typeof window !== "undefined" && typeof document !== "undefined") {
-    bootstrap();
-}
+if (typeof window !== "undefined" && typeof document !== "undefined") bootstrap();
 
 if (typeof module !== "undefined" && module.exports) {
     module.exports = {
-        CONDITION, CONDITION_LABEL,
-        START_G, START_M, START_U, MEET_G, MEET_M, DIR_SHARED,
-        MAP_CENTER, MAP_ZOOM, WALK_SPEED_MPS,
-        SCENE_ROTATION_DEG,
-        T_STABLE, T_BLOCK1, T_BLOCK2, T_BLOCK3, T_BLOCK4, TOTAL_ANIMATION_DURATION,
-        agentPosition, truePosition, offsetMeters,
-        GPS_UPDATE_MS, GPS_TWEEN_MS
+        CONDITION, CONDITION_LABEL, SCHEDULE_G, SCHEDULE_M,
+        START_G, START_M, START_U, TARGET_G, TARGET_M,
+        MAP_CENTER, MAP_ZOOM, WALK_SPEED_MPS, SCENE_ROTATION_DEG,
+        T_STABLE, T_FINAL_HOLD, TOTAL_ANIMATION_DURATION,
+        agentPosition, offsetMeters, buildPureDrift, calculateBearing,
+        BG, BM, BG_FINAL, BM_FINAL, BG_F_LEFT, BG_F_RIGHT, BM_F_LEFT, BM_F_RIGHT
     };
 }
